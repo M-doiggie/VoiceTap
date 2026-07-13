@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VoiceTap</string>
+    <string name="accessibility_service_label">VoiceTap Click Service</string>
+    <string name="accessibility_service_description">Allows VoiceTap to inject taps on screen when a voice command is recognized.</string>
+
+    <!-- Permissions screen -->
+    <string name="perm_overlay_title">Draw Over Other Apps</string>
+    <string name="perm_overlay_desc">Required to show the drawing overlay and floating button.</string>
+    <string name="perm_audio_title">Microphone</string>
+    <string name="perm_audio_desc">Required for always-on voice command recognition.</string>
+    <string name="perm_usage_title">Usage Access</string>
+    <string name="perm_usage_desc">Required to detect which app is in the foreground so per-app regions work correctly.</string>
+    <string name="perm_accessibility_title">Accessibility Service</string>
+    <string name="perm_accessibility_desc">Required to inject taps into other apps when a voice command is matched.</string>
+    <string name="perm_battery_title">Battery Optimization Exemption</string>
+    <string name="perm_battery_desc">Required to keep the voice listener alive on Samsung One UI.</string>
+</resources>
