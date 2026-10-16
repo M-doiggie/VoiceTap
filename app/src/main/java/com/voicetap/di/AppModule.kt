@@ -18,7 +18,9 @@ object AppModule {
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext ctx: Context): AppDatabase =
-        Room.databaseBuilder(ctx, AppDatabase::class.java, "voicetap.db").build()
+        Room.databaseBuilder(ctx, AppDatabase::class.java, "voicetap.db")
+            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .build()
 
     @Provides
     fun provideRegionDao(db: AppDatabase): RegionDao = db.regionDao()

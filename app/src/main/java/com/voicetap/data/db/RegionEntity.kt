@@ -13,4 +13,6 @@ data class RegionEntity(
     val top: Int,
     val right: Int,
     val bottom: Int,
+    /** android.content.res.Configuration.ORIENTATION_PORTRAIT or ORIENTATION_LANDSCAPE at capture time */
+    val orientation: Int,
 )

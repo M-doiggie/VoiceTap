@@ -9,6 +9,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.voicetap.data.RegionRepository
+import com.voicetap.data.SettingsRepository
 import com.voicetap.data.VoiceRegion
 import com.voicetap.service.OverlayService
 import com.voicetap.service.VoiceListenerService
@@ -28,6 +29,7 @@ data class PendingRegion(
     val rect: Rect,
     val appPackage: String,
     val appLabel: String,
+    val orientation: Int,
 )
 
 data class UiState(
@@ -41,6 +43,8 @@ data class UiState(
     val isAccessibilityEnabled: Boolean = false,
     val isVoskModelReady: Boolean = false,
     val servicesRunning: Boolean = false,
+    val visualFeedbackEnabled: Boolean = true,
+    val soundFeedbackEnabled: Boolean = true,
 )
 
 @HiltViewModel
@@ -49,6 +53,7 @@ class MainViewModel @Inject constructor(
     private val repository: RegionRepository,
     private val bus: CommandEventBus,
     private val appDetector: ForegroundAppDetector,
+    private val settingsRepository: SettingsRepository,
 ) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow(UiState())
@@ -57,6 +62,28 @@ class MainViewModel @Inject constructor(
     init {
         observeRegions()
         observeBusEvents()
+        observeSettings()
+    }
+
+    private fun observeSettings() {
+        viewModelScope.launch {
+            settingsRepository.visualFeedbackEnabled.collect { enabled ->
+                _state.update { it.copy(visualFeedbackEnabled = enabled) }
+            }
+        }
+        viewModelScope.launch {
+            settingsRepository.soundFeedbackEnabled.collect { enabled ->
+                _state.update { it.copy(soundFeedbackEnabled = enabled) }
+            }
+        }
+    }
+
+    fun setVisualFeedbackEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setVisualFeedbackEnabled(enabled) }
+    }
+
+    fun setSoundFeedbackEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setSoundFeedbackEnabled(enabled) }
     }
 
     private fun observeRegions() {
@@ -73,7 +100,7 @@ class MainViewModel @Inject constructor(
                 // Show dialog immediately so user knows to speak
                 _state.update {
                     it.copy(
-                        pendingRegion = PendingRegion(event.rect, event.appPackage, event.appLabel),
+                        pendingRegion = PendingRegion(event.rect, event.appPackage, event.appLabel, event.orientation),
                         isRecordingPhrase = true,
                         recordedPhrase = "",
                     )
@@ -84,7 +111,7 @@ class MainViewModel @Inject constructor(
             bus.events.filterIsInstance<AppEvent.PhraseRecorded>().collect { event ->
                 _state.update {
                     it.copy(
-                        pendingRegion = PendingRegion(event.rect, event.appPackage, event.appLabel),
+                        pendingRegion = PendingRegion(event.rect, event.appPackage, event.appLabel, event.orientation),
                         isRecordingPhrase = false,
                         recordedPhrase = event.phrase,
                     )
@@ -95,7 +122,7 @@ class MainViewModel @Inject constructor(
             bus.events.filterIsInstance<AppEvent.PhraseCaptureFailed>().collect { event ->
                 _state.update {
                     it.copy(
-                        pendingRegion = PendingRegion(event.rect, event.appPackage, event.appLabel),
+                        pendingRegion = PendingRegion(event.rect, event.appPackage, event.appLabel, event.orientation),
                         isRecordingPhrase = false,
                         recordedPhrase = "",
                     )
@@ -139,10 +166,19 @@ class MainViewModel @Inject constructor(
     fun retryPhraseRecording() {
         val pending = _state.value.pendingRegion ?: return
         _state.update { it.copy(isRecordingPhrase = true, recordedPhrase = "") }
-        bus.emit(AppEvent.RegionDrawn(pending.rect, pending.appPackage, pending.appLabel))
+        bus.emit(AppEvent.RegionDrawn(pending.rect, pending.appPackage, pending.appLabel, pending.orientation))
+    }
+
+    fun stopPhraseRecording() {
+        if (_state.value.isRecordingPhrase) {
+            bus.emit(AppEvent.StopPhraseCapture)
+        }
     }
 
     fun cancelPendingRegion() {
+        if (_state.value.isRecordingPhrase) {
+            bus.emit(AppEvent.StopPhraseCapture)
+        }
         _state.update { it.copy(pendingRegion = null, isRecordingPhrase = false, recordedPhrase = "") }
     }
 
@@ -151,7 +187,7 @@ class MainViewModel @Inject constructor(
         val phrase = _state.value.recordedPhrase.trim()
         if (phrase.isBlank()) return
         viewModelScope.launch {
-            repository.saveRegion(phrase, pending.appPackage, pending.appLabel, pending.rect)
+            repository.saveRegion(phrase, pending.appPackage, pending.appLabel, pending.rect, pending.orientation)
             _state.update { it.copy(pendingRegion = null, isRecordingPhrase = false, recordedPhrase = "") }
         }
     }
