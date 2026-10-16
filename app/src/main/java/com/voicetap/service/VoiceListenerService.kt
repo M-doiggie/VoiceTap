@@ -33,6 +33,8 @@ class VoiceListenerService : LifecycleService(), RecognitionListener {
     private var speechService: SpeechService? = null
     private var currentRegions: List<VoiceRegion> = emptyList()
     private var isCapturingPhrase = false
+    @Volatile private var stopCaptureRequested = false
+    @Volatile private var listeningEnabled = true
 
     companion object {
         const val CHANNEL_ID = "voice_channel"
@@ -46,6 +48,8 @@ class VoiceListenerService : LifecycleService(), RecognitionListener {
         startForeground(NOTIF_ID, buildNotification())
         observeRegions()
         observeRegionDrawn()
+        observeStopCapture()
+        observeListeningToggle()
         initModel()
     }
 
@@ -62,7 +66,7 @@ class VoiceListenerService : LifecycleService(), RecognitionListener {
         lifecycleScope.launch {
             repository.observeRegions().collect { regions ->
                 currentRegions = regions
-                if (!isCapturingPhrase) restartContinuousListening()
+                if (!isCapturingPhrase && listeningEnabled) restartContinuousListening()
             }
         }
     }
@@ -70,7 +74,27 @@ class VoiceListenerService : LifecycleService(), RecognitionListener {
     private fun observeRegionDrawn() {
         lifecycleScope.launch {
             bus.events.filterIsInstance<AppEvent.RegionDrawn>().collect { event ->
-                capturePhrase(event.rect, event.appPackage, event.appLabel)
+                capturePhrase(event.rect, event.appPackage, event.appLabel, event.orientation)
+            }
+        }
+    }
+
+    private fun observeStopCapture() {
+        lifecycleScope.launch {
+            bus.events.filterIsInstance<AppEvent.StopPhraseCapture>().collect {
+                stopCaptureRequested = true
+            }
+        }
+    }
+
+    private fun observeListeningToggle() {
+        lifecycleScope.launch {
+            bus.events.filterIsInstance<AppEvent.ListeningEnabledChanged>().collect { event ->
+                listeningEnabled = event.enabled
+                withContext(Dispatchers.Main) {
+                    if (listeningEnabled && !isCapturingPhrase) startContinuousListening()
+                    else if (!listeningEnabled) stopContinuousListening()
+                }
             }
         }
     }
@@ -98,14 +122,14 @@ class VoiceListenerService : LifecycleService(), RecognitionListener {
      * Pauses the always-on listener, opens a one-shot Vosk recognizer to capture a
      * single phrase, then restarts the always-on listener.
      */
-    private fun capturePhrase(rect: Rect, appPackage: String, appLabel: String) {
+    private fun capturePhrase(rect: Rect, appPackage: String, appLabel: String, orientation: Int) {
         lifecycleScope.launch(Dispatchers.IO) {
             isCapturingPhrase = true
             withContext(Dispatchers.Main) { stopContinuousListening() }
 
             val m = model
             if (m == null) {
-                bus.emit(AppEvent.PhraseCaptureFailed(rect, appPackage, appLabel))
+                bus.emit(AppEvent.PhraseCaptureFailed(rect, appPackage, appLabel, orientation))
                 isCapturingPhrase = false
                 return@launch
             }
@@ -129,8 +153,11 @@ class VoiceListenerService : LifecycleService(), RecognitionListener {
                 val buffer = ShortArray(bufferSize)
                 var silenceFrames = 0
                 val maxSilence = 25  // ~1.5 s of silence stops capture
+                val maxIterations = 1000  // safety cap (~60s) in case the user never taps stop
+                stopCaptureRequested = false
 
-                repeat(300) {
+                var iterations = 0
+                while (iterations < maxIterations && !stopCaptureRequested) {
                     val read = recorder.read(buffer, 0, buffer.size)
                     if (read > 0) {
                         val bytes = ByteArray(read * 2)
@@ -141,8 +168,9 @@ class VoiceListenerService : LifecycleService(), RecognitionListener {
                         recognizer.acceptWaveForm(bytes, bytes.size)
                         val maxAmp = buffer.take(read).maxOrNull() ?: 0
                         if (maxAmp < 800) silenceFrames++ else silenceFrames = 0
-                        if (silenceFrames >= maxSilence) return@repeat
+                        if (silenceFrames >= maxSilence) break
                     }
+                    iterations++
                 }
 
                 recorder.stop()
@@ -152,16 +180,16 @@ class VoiceListenerService : LifecycleService(), RecognitionListener {
                 recognizer.close()
 
                 if (phrase.isNotBlank()) {
-                    bus.emit(AppEvent.PhraseRecorded(phrase, rect, appPackage, appLabel))
+                    bus.emit(AppEvent.PhraseRecorded(phrase, rect, appPackage, appLabel, orientation))
                 } else {
-                    bus.emit(AppEvent.PhraseCaptureFailed(rect, appPackage, appLabel))
+                    bus.emit(AppEvent.PhraseCaptureFailed(rect, appPackage, appLabel, orientation))
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                bus.emit(AppEvent.PhraseCaptureFailed(rect, appPackage, appLabel))
+                bus.emit(AppEvent.PhraseCaptureFailed(rect, appPackage, appLabel, orientation))
             } finally {
                 isCapturingPhrase = false
-                withContext(Dispatchers.Main) { startContinuousListening() }
+                withContext(Dispatchers.Main) { if (listeningEnabled) startContinuousListening() }
             }
         }
     }
@@ -174,15 +202,17 @@ class VoiceListenerService : LifecycleService(), RecognitionListener {
         if (text.isEmpty() || text == "[unk]") return
 
         val foregroundPkg = appDetector.getForegroundPackage() ?: return
-        val matched = currentRegions.firstOrNull { it.phrase == text && it.appPackage == foregroundPkg }
-            ?: return
+        val currentOrientation = resources.configuration.orientation
+        val matched = currentRegions.firstOrNull {
+            it.phrase == text && it.appPackage == foregroundPkg && it.orientation == currentOrientation
+        } ?: return
         bus.emit(AppEvent.TriggerTap(matched.rect))
     }
 
     override fun onPartialResult(hypothesis: String?) {}
     override fun onFinalResult(hypothesis: String?) {}
     override fun onError(exception: Exception?) { exception?.printStackTrace() }
-    override fun onTimeout() { if (!isCapturingPhrase) startContinuousListening() }
+    override fun onTimeout() { if (!isCapturingPhrase && listeningEnabled) startContinuousListening() }
 
     private fun parseVoskResult(json: String): String =
         Regex("\"text\"\\s*:\\s*\"([^\"]+)\"").find(json)?.groupValues?.get(1) ?: ""

@@ -14,6 +14,7 @@ data class VoiceRegion(
     val appPackage: String,
     val appLabel: String,
     val rect: Rect,
+    val orientation: Int,
 )
 
 @Singleton
@@ -29,6 +30,7 @@ class RegionRepository @Inject constructor(private val dao: RegionDao) {
         appPackage: String,
         appLabel: String,
         rect: Rect,
+        orientation: Int,
     ): Long = dao.insert(
         RegionEntity(
             phrase = phrase.trim().lowercase(),
@@ -38,6 +40,7 @@ class RegionRepository @Inject constructor(private val dao: RegionDao) {
             top = rect.top,
             right = rect.right,
             bottom = rect.bottom,
+            orientation = orientation,
         )
     )
 
@@ -49,5 +52,6 @@ class RegionRepository @Inject constructor(private val dao: RegionDao) {
         appPackage = appPackage,
         appLabel = appLabel,
         rect = Rect(left, top, right, bottom),
+        orientation = orientation,
     )
 }
