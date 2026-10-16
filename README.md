@@ -1,4 +1,5 @@
 # VoiceTap
+**This project was built with AI Assistance.**
 
 VoiceTap is an Android app that lets you tap anywhere on screen — in any app — just by speaking. Draw a box around a button or UI element, record a trigger phrase for it, and VoiceTap will listen in the background and simulate a tap on that spot whenever you say the phrase while that app is in the foreground.
 
